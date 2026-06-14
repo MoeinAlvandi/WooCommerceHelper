@@ -1,0 +1,29 @@
+.wh-buttons{ margin-top:10px; }
+.wh-product-attributes-cta{ display:flex; align-items:center; gap:8px; margin-top:10px; }
+.wh-product-attributes-cta .description{ margin:0; }
+.wh-shortdesc-actions{ display:flex; align-items:center; gap:8px; margin-left:8px; }
+.wh-productdesc-actions{ display:flex; align-items:center; gap:8px; margin-left:8px; }
+.wh-shortdesc-cost{ font-size:12px; color:#646970; }
+.wh-productdesc-cost{ font-size:12px; color:#646970; }
+.wh-cost-note{ margin:0 0 12px; padding:8px 10px; border-left:4px solid #2271b1; background:#f6f7f7; color:#1d2327; border-radius:4px; }
+.wh-overlay{ position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:9998; }
+.wh-modal{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#fff; z-index:9999; padding:20px; max-width:600px; width:90%; box-shadow:0 8px 30px rgba(0,0,0,0.2); border-radius:6px; }
+.wh-modal h2{ margin-top:0; }
+.wh-modal .wh-close{ position:absolute; right:8px; top:6px; background:transparent; border:0; font-size:20px; cursor:pointer; }
+.wh-attrs{ max-height:320px; overflow:auto; margin-bottom:12px; }
+.wh-attr{ display:block; padding:6px 4px; border-bottom:1px solid #f1f1f1; }
+.wh-actions{ text-align:right; }
+.wh-add-attributes-action.is-busy{ pointer-events:none; opacity:0.6; }
+.wh-modal .wh-actions .button{ margin-left:6px; }
+.wh-prompt-panel{ margin:0 0 14px; padding:10px 12px; border:1px solid #dcdcde; border-radius:6px; background:#f8f9fa; }
+.wh-prompt-panel summary{ cursor:pointer; font-weight:600; margin-bottom:8px; }
+.wh-prompt-text{ width:100%; min-height:160px; resize:vertical; border:1px solid #dcdcde; border-radius:6px; padding:10px; box-sizing:border-box; background:#fff; font-family:inherit; direction:rtl; }
+.wh-attr-row{ display:flex; gap:12px; align-items:flex-start; padding:10px 4px; border-bottom:1px solid #f1f1f1; }
+.wh-attr-check{ flex:0 0 auto; min-width:70px; padding-top:8px; }
+.wh-attr-fields{ flex:1 1 auto; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.wh-attr-fields .regular-text{ width:100%; margin:0; }
+@media (max-width: 640px){
+  .wh-attr-row{ flex-direction:column; }
+  .wh-attr-check{ padding-top:0; }
+  .wh-attr-fields{ grid-template-columns:1fr; }
+}
