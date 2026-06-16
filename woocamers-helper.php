@@ -1,9 +1,10 @@
 <?php
 /**
- * Plugin Name: WooCamers Helper
- * Description: Adds configurable WooCommerce product attribute generation with OpenAI and custom API support.
- * Version: 0.3.3
- * Author: Generated
+ * Plugin Name: WooCommerce Helper
+ * Description: This plugin helps us import attribute descriptions and short descriptions using AI.
+ * Version: 0.4.4
+ * Author: Moein Alvandi
+ * Author URI: https://moeinalvandi.com/
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -12,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class WooCamers_Helper {
     const OPTION_NAME = 'wh_settings';
-    const VERSION     = '0.3.3';
+    const VERSION     = '0.4.4';
 
     public function __construct() {
         add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
@@ -38,6 +39,8 @@ class WooCamers_Helper {
 
         add_action( 'wp_ajax_wh_generate_product_description', array( $this, 'ajax_generate_product_description' ) );
         add_action( 'wp_ajax_nopriv_wh_generate_product_description', array( $this, 'ajax_generate_product_description' ) );
+
+        add_action( 'wp_ajax_wh_fetch_sample_product', array( $this, 'ajax_fetch_sample_product' ) );
     }
 
     private function get_default_prompt_template() {
@@ -45,13 +48,18 @@ class WooCamers_Helper {
             . "فقط یک JSON معتبر برگردان که ساختار آن شامل کلید `attributes` باشد.\n"
             . "`attributes` باید یک آرایه از آیتم‌ها باشد و هر آیتم فقط دو کلید `name` و `value` داشته باشد.\n"
             . "هیچ متن اضافه، توضیح، یا Markdown برنگردان.\n\n"
+            . "اطلاعات برند:\n"
+            . "{brand_description}\n\n"
             . "اطلاعات محصول جاری:\n"
             . "عنوان: {title}\n"
             . "خلاصه: {excerpt}\n"
             . "توضیحات: {description}\n"
             . "قیمت: {price}\n"
             . "دسته‌ها: {categories}\n"
-            . "SKU: {sku}\n";
+            . "SKU: {sku}\n\n"
+            . "محصولات نمونه و ویژگی‌هایشان (در صورت وجود):\n"
+            . "{sample_products}\n"
+            . "اگر محصول جاری از نظر ماهیت و کاربرد شبیه یکی از محصولات نمونه بالا بود، از همان مجموعه نام ویژگی‌ها برای محصول جاری استفاده کن و مقدار مناسب هر ویژگی را متناسب با محصول جاری تولید کن. مقادیر نمونه فقط برای نشان‌دادن قالب هستند و نباید عیناً کپی شوند. اگر هیچ نمونه‌ای شبیه نبود، ویژگی‌ها را آزادانه تولید کن.\n";
     }
 
     private function get_default_short_description_prompt_template() {
@@ -60,6 +68,8 @@ class WooCamers_Helper {
             . "متن نهایی باید 2 تا 4 جمله باشد، بیش از حد تبلیغاتی نباشد و برای خریدار مفید باشد.\n"
             . "از اطلاعات زیر استفاده کن و اگر ویژگی‌های محصول مهم هستند، آن‌ها را در متن بگنجان.\n"
             . "فقط متن نهایی را برگردان، بدون Markdown، بدون تیتر و بدون نقل‌قول.\n\n"
+            . "اطلاعات برند:\n"
+            . "{brand_description}\n\n"
             . "اطلاعات محصول جاری:\n"
             . "عنوان: {title}\n"
             . "خلاصه فعلی: {current_short_description}\n"
@@ -77,6 +87,8 @@ class WooCamers_Helper {
             . "متن باید برای اقدام به خرید مفید باشد و مستقیماً با ویژگی‌ها و مشخصات محصول پیوند بخورد.\n"
             . "اگر اطلاعات ویژگی یا توضیحات محصول کامل نیست، بر اساس داده‌های موجود یک متن واقعی و مفید تولید کن.\n"
             . "فقط متن نهایی را برگردان، بدون Markdown، بدون عنوان و بدون نقل‌قول.\n\n"
+            . "اطلاعات برند:\n"
+            . "{brand_description}\n\n"
             . "اطلاعات محصول جاری:\n"
             . "عنوان: {title}\n"
             . "توضیح اختصاری الان: {current_short_description}\n"
@@ -91,13 +103,16 @@ class WooCamers_Helper {
 
     private function get_default_settings() {
         return array(
-            'connection_mode'  => 'mock',
-            'api_endpoint'     => '',
-            'api_key'          => '',
+            'connection_mode'   => 'mock',
+            'api_endpoint'      => '',
+            'api_key'           => '',
             'usd_to_toman_rate' => '0',
-            'openai_model'     => 'gpt-4o',
-            'openai_reasoning' => 'low',
-            'prompt_template'  => $this->get_default_prompt_template(),
+            'openai_model'      => 'gpt-4o',
+            'openai_reasoning'  => 'low',
+            'avalai_model'      => 'gpt-4o-mini',
+            'brand_description' => '',
+            'sample_products'   => array(),
+            'prompt_template'   => $this->get_default_prompt_template(),
             'product_description_prompt_template' => $this->get_default_product_description_prompt_template(),
             'short_description_prompt_template' => $this->get_default_short_description_prompt_template(),
         );
@@ -111,7 +126,7 @@ class WooCamers_Helper {
             $settings['connection_mode'] = 'gapgpt';
         }
 
-        if ( ! in_array( $settings['connection_mode'], array( 'mock', 'endpoint', 'gapgpt' ), true ) ) {
+        if ( ! in_array( $settings['connection_mode'], array( 'mock', 'endpoint', 'gapgpt', 'avalai' ), true ) ) {
             $settings['connection_mode'] = 'mock';
         }
 
@@ -130,18 +145,293 @@ class WooCamers_Helper {
         if ( in_array( $mode, array( 'openai', 'chat' ), true ) ) {
             $mode = 'gapgpt';
         }
-        $mode = in_array( $mode, array( 'mock', 'endpoint', 'gapgpt' ), true ) ? $mode : $defaults['connection_mode'];
+        $mode = in_array( $mode, array( 'mock', 'endpoint', 'gapgpt', 'avalai' ), true ) ? $mode : $defaults['connection_mode'];
 
         return array(
-            'connection_mode'  => $mode,
-            'api_endpoint'     => isset( $input['api_endpoint'] ) ? esc_url_raw( trim( $input['api_endpoint'] ) ) : '',
-            'api_key'          => isset( $input['api_key'] ) ? sanitize_text_field( $input['api_key'] ) : '',
+            'connection_mode'   => $mode,
+            'api_endpoint'      => isset( $input['api_endpoint'] ) ? esc_url_raw( trim( $input['api_endpoint'] ) ) : '',
+            'api_key'           => isset( $input['api_key'] ) ? sanitize_text_field( $input['api_key'] ) : '',
             'usd_to_toman_rate' => isset( $input['usd_to_toman_rate'] ) ? preg_replace( '/[^0-9.]/', '', (string) $input['usd_to_toman_rate'] ) : '0',
-            'openai_model'     => isset( $input['openai_model'] ) ? sanitize_text_field( $input['openai_model'] ) : $defaults['openai_model'],
-            'openai_reasoning' => isset( $input['openai_reasoning'] ) ? sanitize_key( $input['openai_reasoning'] ) : $defaults['openai_reasoning'],
-            'prompt_template'  => isset( $input['prompt_template'] ) ? sanitize_textarea_field( $input['prompt_template'] ) : $defaults['prompt_template'],
+            'openai_model'      => isset( $input['openai_model'] ) ? sanitize_text_field( $input['openai_model'] ) : $defaults['openai_model'],
+            'openai_reasoning'  => isset( $input['openai_reasoning'] ) ? sanitize_key( $input['openai_reasoning'] ) : $defaults['openai_reasoning'],
+            'avalai_model'      => isset( $input['avalai_model'] ) ? sanitize_text_field( $input['avalai_model'] ) : $defaults['avalai_model'],
+            'brand_description' => isset( $input['brand_description'] ) ? sanitize_textarea_field( $input['brand_description'] ) : '',
+            'sample_products'   => isset( $input['sample_products'] ) ? $this->sanitize_sample_products( $input['sample_products'] ) : array(),
+            'prompt_template'   => isset( $input['prompt_template'] ) ? sanitize_textarea_field( $input['prompt_template'] ) : $defaults['prompt_template'],
             'product_description_prompt_template' => isset( $input['product_description_prompt_template'] ) ? sanitize_textarea_field( $input['product_description_prompt_template'] ) : $defaults['product_description_prompt_template'],
             'short_description_prompt_template' => isset( $input['short_description_prompt_template'] ) ? sanitize_textarea_field( $input['short_description_prompt_template'] ) : $defaults['short_description_prompt_template'],
+        );
+    }
+
+    private function sanitize_sample_products( $input ) {
+        if ( ! is_array( $input ) ) {
+            return array();
+        }
+
+        $clean = array();
+
+        foreach ( $input as $row ) {
+            if ( ! is_array( $row ) ) {
+                continue;
+            }
+
+            $url   = isset( $row['url'] ) ? esc_url_raw( trim( (string) $row['url'] ) ) : '';
+            $title = isset( $row['title'] ) ? sanitize_text_field( (string) $row['title'] ) : '';
+
+            $attributes = array();
+            if ( isset( $row['attributes'] ) ) {
+                $raw = $row['attributes'];
+
+                // The UI stores fetched attributes as a JSON string in a hidden field.
+                if ( is_string( $raw ) ) {
+                    $decoded = json_decode( $raw, true );
+                    $raw     = ( JSON_ERROR_NONE === json_last_error() ) ? $decoded : array();
+                }
+
+                $attributes = $this->normalize_attribute_items( $raw );
+            }
+
+            // Skip empty rows (no url and no attributes).
+            if ( '' === $url && empty( $attributes ) ) {
+                continue;
+            }
+
+            $clean[] = array(
+                'url'        => $url,
+                'title'      => $title,
+                'attributes' => $attributes,
+            );
+        }
+
+        return $clean;
+    }
+
+    private function build_sample_products_text( $samples ) {
+        if ( ! is_array( $samples ) || empty( $samples ) ) {
+            return '';
+        }
+
+        $blocks = array();
+        $index  = 0;
+
+        foreach ( $samples as $sample ) {
+            if ( ! is_array( $sample ) || empty( $sample['attributes'] ) || ! is_array( $sample['attributes'] ) ) {
+                continue;
+            }
+
+            $index++;
+            $title = ! empty( $sample['title'] ) ? $sample['title'] : ( ! empty( $sample['url'] ) ? $sample['url'] : ( 'محصول نمونه ' . $index ) );
+
+            $lines = array( 'محصول نمونه ' . $index . ': ' . wp_strip_all_tags( (string) $title ) );
+
+            foreach ( $sample['attributes'] as $attr ) {
+                if ( ! is_array( $attr ) || empty( $attr['name'] ) ) {
+                    continue;
+                }
+                $name  = wp_strip_all_tags( (string) $attr['name'] );
+                $value = isset( $attr['value'] ) ? wp_strip_all_tags( (string) $attr['value'] ) : '';
+                $lines[] = ( '' !== $value ) ? ( '- ' . $name . ': ' . $value ) : ( '- ' . $name );
+            }
+
+            if ( count( $lines ) > 1 ) {
+                $blocks[] = implode( "\n", $lines );
+            }
+        }
+
+        return implode( "\n\n", $blocks );
+    }
+
+    /**
+     * Resolve a product URL into a title + list of attributes.
+     *
+     * First tries to map the URL to a local WooCommerce product (most reliable),
+     * otherwise fetches the page HTML and parses the WooCommerce attributes table.
+     *
+     * @param string $url
+     * @return array|WP_Error array( 'title' => string, 'attributes' => array )
+     */
+    private function fetch_sample_product_attributes( $url ) {
+        $url = trim( (string) $url );
+        if ( '' === $url || ! filter_var( $url, FILTER_VALIDATE_URL ) ) {
+            return new WP_Error( 'wh_invalid_url', 'آدرس محصول معتبر نیست.' );
+        }
+
+        // 1) Try to resolve to a local product first.
+        $local = $this->extract_attributes_from_local_url( $url );
+        if ( ! is_wp_error( $local ) && ! empty( $local['attributes'] ) ) {
+            return $local;
+        }
+
+        // 2) Fall back to fetching and scraping the page HTML.
+        $remote = $this->extract_attributes_from_remote_url( $url );
+        if ( ! is_wp_error( $remote ) ) {
+            return $remote;
+        }
+
+        // If local resolved a product but it simply had no attributes, surface that.
+        if ( ! is_wp_error( $local ) ) {
+            return $local;
+        }
+
+        return $remote;
+    }
+
+    private function extract_attributes_from_local_url( $url ) {
+        if ( ! function_exists( 'url_to_postid' ) ) {
+            return new WP_Error( 'wh_no_local', 'تابع url_to_postid در دسترس نیست.' );
+        }
+
+        $post_id = url_to_postid( $url );
+        if ( ! $post_id || 'product' !== get_post_type( $post_id ) ) {
+            return new WP_Error( 'wh_not_local_product', 'محصول داخلی برای این آدرس پیدا نشد.' );
+        }
+
+        $product = wc_get_product( $post_id );
+        if ( ! $product ) {
+            return new WP_Error( 'wh_local_missing', 'محصول داخلی قابل بارگذاری نیست.' );
+        }
+
+        $attributes = array();
+
+        foreach ( $product->get_attributes() as $attribute ) {
+            if ( ! $attribute instanceof WC_Product_Attribute ) {
+                continue;
+            }
+
+            $name = $attribute->get_name();
+
+            if ( $attribute->is_taxonomy() ) {
+                $values = wc_get_product_terms( $post_id, $name, array( 'fields' => 'names' ) );
+            } else {
+                $values = array_map( 'strval', (array) $attribute->get_options() );
+            }
+
+            $label = wc_attribute_label( $name );
+            $value = implode( ', ', array_filter( array_map( 'sanitize_text_field', (array) $values ) ) );
+
+            if ( '' !== trim( (string) $label ) ) {
+                $attributes[] = array(
+                    'name'  => sanitize_text_field( $label ),
+                    'value' => $value,
+                );
+            }
+        }
+
+        return array(
+            'title'      => $product->get_name(),
+            'attributes' => $attributes,
+        );
+    }
+
+    private function extract_attributes_from_remote_url( $url ) {
+        $response = wp_remote_get(
+            $url,
+            array(
+                'timeout'     => 20,
+                'redirection' => 5,
+                'user-agent'  => 'WooCamersHelper/' . self::VERSION . '; ' . home_url( '/' ),
+            )
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return new WP_Error( 'wh_fetch_failed', 'دریافت صفحه محصول ناموفق بود: ' . $response->get_error_message() );
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        if ( $code < 200 || $code >= 300 ) {
+            return new WP_Error( 'wh_fetch_status', 'صفحه محصول با کد ' . $code . ' پاسخ داد.' );
+        }
+
+        $html = wp_remote_retrieve_body( $response );
+        if ( '' === trim( (string) $html ) ) {
+            return new WP_Error( 'wh_fetch_empty', 'محتوای صفحه محصول خالی است.' );
+        }
+
+        $parsed = $this->parse_attributes_from_html( $html );
+        if ( empty( $parsed['attributes'] ) ) {
+            return new WP_Error( 'wh_no_attributes', 'هیچ ویژگی‌ای در صفحه محصول پیدا نشد. مطمئن شوید آدرس صفحه‌ی یک محصول ووکامرس با جدول ویژگی‌ها است.' );
+        }
+
+        return $parsed;
+    }
+
+    private function parse_attributes_from_html( $html ) {
+        $result = array(
+            'title'      => '',
+            'attributes' => array(),
+        );
+
+        if ( ! class_exists( 'DOMDocument' ) ) {
+            return $result;
+        }
+
+        $previous = libxml_use_internal_errors( true );
+        $doc      = new DOMDocument();
+        // Force UTF-8 handling for non-Latin (e.g. Persian) content.
+        $doc->loadHTML( '<?xml encoding="UTF-8">' . $html );
+        libxml_clear_errors();
+        libxml_use_internal_errors( $previous );
+
+        $xpath = new DOMXPath( $doc );
+
+        // Product title (WooCommerce single product).
+        $title_nodes = $xpath->query( "//h1[contains(concat(' ', normalize-space(@class), ' '), ' product_title ')]" );
+        if ( $title_nodes && $title_nodes->length ) {
+            $result['title'] = sanitize_text_field( trim( $title_nodes->item( 0 )->textContent ) );
+        }
+
+        // WooCommerce additional-information / attributes table.
+        $rows = $xpath->query( "//table[contains(concat(' ', normalize-space(@class), ' '), ' shop_attributes ') or contains(concat(' ', normalize-space(@class), ' '), ' woocommerce-product-attributes ')]//tr" );
+
+        if ( $rows && $rows->length ) {
+            foreach ( $rows as $row ) {
+                $label_nodes = $xpath->query( ".//th", $row );
+                $value_nodes = $xpath->query( ".//td", $row );
+
+                if ( ! $label_nodes->length || ! $value_nodes->length ) {
+                    continue;
+                }
+
+                $name  = trim( preg_replace( '/\s+/u', ' ', $label_nodes->item( 0 )->textContent ) );
+                $value = trim( preg_replace( '/\s+/u', ' ', $value_nodes->item( 0 )->textContent ) );
+
+                $name  = sanitize_text_field( $name );
+                $value = sanitize_text_field( $value );
+
+                if ( '' !== $name ) {
+                    $result['attributes'][] = array(
+                        'name'  => $name,
+                        'value' => $value,
+                    );
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    public function ajax_fetch_sample_product() {
+        check_ajax_referer( 'wh_nonce', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( 'دسترسی مجاز نیست.' );
+        }
+
+        $url = isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '';
+        if ( '' === $url ) {
+            wp_send_json_error( 'آدرس محصول را وارد کنید.' );
+        }
+
+        $result = $this->fetch_sample_product_attributes( $url );
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( $result->get_error_message() );
+        }
+
+        wp_send_json_success(
+            array(
+                'title'      => isset( $result['title'] ) ? $result['title'] : '',
+                'attributes' => isset( $result['attributes'] ) ? $result['attributes'] : array(),
+            )
         );
     }
 
@@ -218,6 +508,11 @@ class WooCamers_Helper {
                 'empty_message' => 'هیچ ویژگی‌ای انتخاب نشده است.',
                 'success_text'  => 'ویژگی‌ها اضافه شدند.',
                 'error_text'    => 'خطا',
+                'sample_fetch_loading' => 'در حال خواندن...',
+                'sample_fetch_text'    => 'خواندن ویژگی‌ها',
+                'sample_url_required'  => 'ابتدا آدرس محصول را وارد کنید.',
+                'sample_no_attrs'      => 'هیچ ویژگی‌ای پیدا نشد.',
+                'sample_attrs_label'   => 'ویژگی‌های خوانده‌شده',
             )
         );
     }
@@ -251,8 +546,8 @@ class WooCamers_Helper {
     public function add_settings_page() {
         add_submenu_page(
             'woocommerce',
-            'Helper WooCamers',
-            'Helper WooCamers',
+            'WooCommerce Helper',
+            'WooCommerce Helper',
             'manage_woocommerce',
             'wh-settings',
             array( $this, 'settings_page' )
@@ -264,7 +559,7 @@ class WooCamers_Helper {
         $saved   = isset( $_GET['wh_saved'] ) ? sanitize_text_field( wp_unslash( $_GET['wh_saved'] ) ) : '';
         ?>
         <div class="wrap">
-            <h1>Helper WooCamers</h1>
+            <h1>WooCommerce Helper</h1>
             <?php if ( '1' === $saved ) : ?>
                 <div class="notice notice-success is-dismissible"><p>تنظیمات ذخیره شد.</p></div>
             <?php endif; ?>
@@ -285,8 +580,9 @@ class WooCamers_Helper {
                                 <option value="mock" <?php selected( $options['connection_mode'], 'mock' ); ?>>آزمایشی / محلی</option>
                                 <option value="endpoint" <?php selected( $options['connection_mode'], 'endpoint' ); ?>>API سفارشی</option>
                                 <option value="gapgpt" <?php selected( $options['connection_mode'], 'gapgpt' ); ?>>Gap GPT / OpenAI Chat Completions</option>
+                                <option value="avalai" <?php selected( $options['connection_mode'], 'avalai' ); ?>>AvalAI</option>
                             </select>
-                            <p class="description">در حالت Gap GPT، اگر Endpoint خالی باشد، آدرس پیش‌فرض <code>https://api.openai.com/v1/chat/completions</code> استفاده می‌شود.</p>
+                            <p class="description">در حالت Gap GPT، اگر Endpoint خالی باشد، آدرس پیش‌فرض <code>https://api.openai.com/v1/chat/completions</code> استفاده می‌شود. در حالت AvalAI از آدرس <code>https://api.avalai.ir/v1/chat/completions</code> استفاده می‌شود.</p>
                         </td>
                     </tr>
                     <tr valign="top">
@@ -314,6 +610,7 @@ class WooCamers_Helper {
                                 class="regular-text"
                                 autocomplete="off"
                             />
+                            <p class="description">برای Gap GPT کلید OpenAI و برای AvalAI کلید avalai.ir را وارد کنید.</p>
                         </td>
                     </tr>
                     <tr valign="top">
@@ -324,7 +621,7 @@ class WooCamers_Helper {
                                 id="wh_usd_to_toman_rate"
                                 name="<?php echo esc_attr( self::OPTION_NAME ); ?>[usd_to_toman_rate]"
                                 value="<?php echo esc_attr( $options['usd_to_toman_rate'] ); ?>"
-                                class="small-text"
+                                class="regular-text"
                                 min="0"
                                 step="1"
                             />
@@ -346,6 +643,20 @@ class WooCamers_Helper {
                         </td>
                     </tr>
                     <tr valign="top">
+                        <th scope="row"><label for="wh_avalai_model">مدل AvalAI</label></th>
+                        <td>
+                            <input
+                                type="text"
+                                id="wh_avalai_model"
+                                name="<?php echo esc_attr( self::OPTION_NAME ); ?>[avalai_model]"
+                                value="<?php echo esc_attr( $options['avalai_model'] ); ?>"
+                                class="regular-text"
+                                placeholder="gpt-4o-mini"
+                            />
+                            <p class="description">نام مدل برای AvalAI. مثال: <code>gpt-4o-mini</code>، <code>claude-sonnet-4-6</code>، <code>gemini-2.0-flash</code>.</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
                         <th scope="row"><label for="wh_openai_reasoning">Reasoning effort</label></th>
                         <td>
                             <select id="wh_openai_reasoning" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[openai_reasoning]">
@@ -355,6 +666,82 @@ class WooCamers_Helper {
                                 <option value="high" <?php selected( $options['openai_reasoning'], 'high' ); ?>>high</option>
                             </select>
                             <p class="description">برای تولید ویژگی محصول، معمولاً <code>low</code> کافی است.</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><label for="wh_brand_description">توضیح برند</label></th>
+                        <td>
+                            <textarea
+                                id="wh_brand_description"
+                                name="<?php echo esc_attr( self::OPTION_NAME ); ?>[brand_description]"
+                                rows="5"
+                                class="large-text"
+                                placeholder="مثال: ما یک فروشگاه تخصصی لوازم خانگی هستیم که محصولات باکیفیت اروپایی را با قیمت مناسب ارائه می‌دهیم..."
+                            ><?php echo esc_textarea( $options['brand_description'] ); ?></textarea>
+                            <p class="description">
+                                برند یا فروشگاه خود را معرفی کنید: چه می‌فروشید، چه مخاطبی دارید، و لحن یا سبک محتوای مطلوب شما چیست.
+                                این اطلاعات در تمام درخواست‌های تولید متن (توضیح مختصر، توضیح کامل، ویژگی‌ها) به API ارسال می‌شود.
+                                همچنین می‌توانید از <code>{brand_description}</code> در پرامپت‌های زیر استفاده کنید.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">محصولات نمونه</th>
+                        <td>
+                            <p class="description" style="margin-bottom:10px;">
+                                لینک یک یا چند محصول نمونه را وارد کنید و دکمه «خواندن ویژگی‌ها» را بزنید تا ویژگی‌های آن‌ها به‌صورت خودکار خوانده و ذخیره شود.
+                                هنگام تولید ویژگی برای هر محصول، هوش مصنوعی بررسی می‌کند که آیا محصول شبیه یکی از این نمونه‌هاست و در صورت شباهت از همان ویژگی‌ها استفاده می‌کند.
+                                برای محصولات همین سایت، ویژگی‌ها مستقیماً از دیتابیس خوانده می‌شوند؛ در غیر این صورت صفحه محصول دریافت و جدول ویژگی‌ها استخراج می‌شود.
+                            </p>
+
+                            <div id="wh-sample-products">
+                                <?php
+                                $samples = ( isset( $options['sample_products'] ) && is_array( $options['sample_products'] ) ) ? $options['sample_products'] : array();
+                                $sample_index = 0;
+                                foreach ( $samples as $sample ) :
+                                    $s_url   = isset( $sample['url'] ) ? $sample['url'] : '';
+                                    $s_title = isset( $sample['title'] ) ? $sample['title'] : '';
+                                    $s_attrs = ( isset( $sample['attributes'] ) && is_array( $sample['attributes'] ) ) ? $sample['attributes'] : array();
+                                    $s_attrs_json = wp_json_encode( $s_attrs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+                                    ?>
+                                    <div class="wh-sample-product" data-index="<?php echo esc_attr( $sample_index ); ?>">
+                                        <div class="wh-sample-product-head">
+                                            <input
+                                                type="url"
+                                                class="wh-sample-url regular-text"
+                                                name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][<?php echo esc_attr( $sample_index ); ?>][url]"
+                                                value="<?php echo esc_attr( $s_url ); ?>"
+                                                placeholder="https://example.com/product/..."
+                                            />
+                                            <input type="hidden" class="wh-sample-title" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][<?php echo esc_attr( $sample_index ); ?>][title]" value="<?php echo esc_attr( $s_title ); ?>" />
+                                            <input type="hidden" class="wh-sample-attributes" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][<?php echo esc_attr( $sample_index ); ?>][attributes]" value="<?php echo esc_attr( $s_attrs_json ); ?>" />
+                                            <button type="button" class="button wh-fetch-sample">خواندن ویژگی‌ها</button>
+                                            <button type="button" class="button wh-remove-sample" aria-label="حذف">حذف</button>
+                                        </div>
+                                        <div class="wh-sample-preview"></div>
+                                    </div>
+                                    <?php
+                                    $sample_index++;
+                                endforeach;
+                                ?>
+                            </div>
+
+                            <p style="margin-top:10px;">
+                                <button type="button" class="button button-secondary" id="wh-add-sample">افزودن محصول نمونه</button>
+                            </p>
+
+                            <script type="text/html" id="wh-sample-row-template">
+                                <div class="wh-sample-product" data-index="__INDEX__">
+                                    <div class="wh-sample-product-head">
+                                        <input type="url" class="wh-sample-url regular-text" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][__INDEX__][url]" value="" placeholder="https://example.com/product/..." />
+                                        <input type="hidden" class="wh-sample-title" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][__INDEX__][title]" value="" />
+                                        <input type="hidden" class="wh-sample-attributes" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[sample_products][__INDEX__][attributes]" value="" />
+                                        <button type="button" class="button wh-fetch-sample">خواندن ویژگی‌ها</button>
+                                        <button type="button" class="button wh-remove-sample" aria-label="حذف">حذف</button>
+                                    </div>
+                                    <div class="wh-sample-preview"></div>
+                                </div>
+                            </script>
                         </td>
                     </tr>
                     <tr valign="top">
@@ -377,6 +764,8 @@ class WooCamers_Helper {
                                 <code>{tags}</code>
                                 <code>{attributes}</code>
                                 <code>{current_short_description}</code>
+                                <code>{brand_description}</code>
+                                <code>{sample_products}</code>
                             </p>
                         </td>
                     </tr>
@@ -573,20 +962,22 @@ class WooCamers_Helper {
         return $base;
     }
 
-    private function replace_placeholders( $template, $data ) {
+    private function replace_placeholders( $template, $data, $brand_description = '', $sample_products = '' ) {
         return strtr(
             $template,
             array(
-                '{title}'       => isset( $data['title'] ) ? wp_strip_all_tags( (string) $data['title'] ) : '',
-                '{excerpt}'     => isset( $data['excerpt'] ) ? wp_strip_all_tags( (string) $data['excerpt'] ) : '',
-                '{description}' => isset( $data['description'] ) ? wp_strip_all_tags( (string) $data['description'] ) : '',
-                '{price}'       => isset( $data['price'] ) ? wp_strip_all_tags( (string) $data['price'] ) : '',
-                '{categories}'  => isset( $data['categories'] ) ? implode( ', ', array_map( 'sanitize_text_field', (array) $data['categories'] ) ) : '',
-                '{sku}'         => isset( $data['sku'] ) ? wp_strip_all_tags( (string) $data['sku'] ) : '',
-                '{tags}'        => isset( $data['tags'] ) ? wp_strip_all_tags( (string) $data['tags'] ) : '',
-                '{attributes}'  => isset( $data['attributes'] ) ? wp_strip_all_tags( (string) $data['attributes'] ) : '',
+                '{sample_products}'     => wp_strip_all_tags( (string) $sample_products ),
+                '{title}'               => isset( $data['title'] ) ? wp_strip_all_tags( (string) $data['title'] ) : '',
+                '{excerpt}'             => isset( $data['excerpt'] ) ? wp_strip_all_tags( (string) $data['excerpt'] ) : '',
+                '{description}'         => isset( $data['description'] ) ? wp_strip_all_tags( (string) $data['description'] ) : '',
+                '{price}'               => isset( $data['price'] ) ? wp_strip_all_tags( (string) $data['price'] ) : '',
+                '{categories}'          => isset( $data['categories'] ) ? implode( ', ', array_map( 'sanitize_text_field', (array) $data['categories'] ) ) : '',
+                '{sku}'                 => isset( $data['sku'] ) ? wp_strip_all_tags( (string) $data['sku'] ) : '',
+                '{tags}'                => isset( $data['tags'] ) ? wp_strip_all_tags( (string) $data['tags'] ) : '',
+                '{attributes}'          => isset( $data['attributes'] ) ? wp_strip_all_tags( (string) $data['attributes'] ) : '',
                 '{current_description}' => isset( $data['current_description'] ) ? wp_strip_all_tags( (string) $data['current_description'] ) : '',
                 '{current_short_description}' => isset( $data['current_short_description'] ) ? wp_strip_all_tags( (string) $data['current_short_description'] ) : '',
+                '{brand_description}'   => wp_strip_all_tags( (string) $brand_description ),
             )
         );
     }
@@ -762,6 +1153,10 @@ class WooCamers_Helper {
         return ! empty( $settings['api_endpoint'] ) ? $settings['api_endpoint'] : 'https://api.openai.com/v1/chat/completions';
     }
 
+    private function get_avalai_endpoint() {
+        return 'https://api.avalai.ir/v1/chat/completions';
+    }
+
     private function get_model_pricing( $model ) {
         $model = strtolower( trim( (string) $model ) );
 
@@ -860,14 +1255,18 @@ class WooCamers_Helper {
             $headers['Authorization'] = 'Bearer ' . $settings['api_key'];
         }
 
-        if ( 'gapgpt' === $settings['connection_mode'] ) {
+        if ( in_array( $settings['connection_mode'], array( 'gapgpt', 'avalai' ), true ) ) {
             $product_context = wp_json_encode(
                 $product_data,
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
             );
 
+            $model = ( 'avalai' === $settings['connection_mode'] )
+                ? ( ! empty( $settings['avalai_model'] ) ? $settings['avalai_model'] : 'gpt-4o-mini' )
+                : $settings['openai_model'];
+
             $body = array(
-                'model' => $settings['openai_model'],
+                'model' => $model,
                 'messages' => array(
                     array(
                         'role'    => 'system',
@@ -925,7 +1324,21 @@ class WooCamers_Helper {
         }
 
         $settings = $this->get_settings();
-        $prompt   = $this->replace_placeholders( $settings['prompt_template'], $product_data );
+        $brand_description = isset( $settings['brand_description'] ) ? $settings['brand_description'] : '';
+        $sample_products_text = $this->build_sample_products_text( isset( $settings['sample_products'] ) ? $settings['sample_products'] : array() );
+        $prompt   = $this->replace_placeholders( $settings['prompt_template'], $product_data, $brand_description, $sample_products_text );
+
+        // If the user's saved template doesn't include the {sample_products} placeholder,
+        // append the sample products automatically so the feature still works.
+        if ( '' !== $sample_products_text && false === strpos( (string) $settings['prompt_template'], '{sample_products}' ) ) {
+            $prompt .= "\n\nمحصولات نمونه و ویژگی‌هایشان:\n" . $sample_products_text
+                . "\nاگر محصول جاری از نظر ماهیت و کاربرد شبیه یکی از محصولات نمونه بالا بود، از همان نام ویژگی‌ها استفاده کن و مقدار مناسب را متناسب با محصول جاری تولید کن. مقادیر نمونه را عیناً کپی نکن.";
+        }
+
+        if ( '' !== $brand_description ) {
+            $product_data['brand_description'] = $brand_description;
+        }
+
         $product_context_json = wp_json_encode(
             $product_data,
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -951,12 +1364,22 @@ class WooCamers_Helper {
             wp_send_json_error( 'OpenAI API Key is required for the Gap GPT connection mode.' );
         }
 
+        if ( 'avalai' === $settings['connection_mode'] && empty( $settings['api_key'] ) ) {
+            wp_send_json_error( 'AvalAI API Key is required for the AvalAI connection mode.' );
+        }
+
         if ( 'endpoint' === $settings['connection_mode'] && empty( $settings['api_endpoint'] ) ) {
             wp_send_json_error( 'API Endpoint is required for the custom endpoint mode.' );
         }
 
         $args = $this->maybe_build_request_args( $settings, $product_data, $prompt );
-        $endpoint = 'gapgpt' === $settings['connection_mode'] ? $this->get_openai_endpoint( $settings ) : $settings['api_endpoint'];
+        if ( 'gapgpt' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_openai_endpoint( $settings );
+        } elseif ( 'avalai' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_avalai_endpoint();
+        } else {
+            $endpoint = $settings['api_endpoint'];
+        }
 
         $resp = wp_remote_post( $endpoint, $args );
         if ( is_wp_error( $resp ) ) {
@@ -988,7 +1411,7 @@ class WooCamers_Helper {
                 'attributes' => $attributes,
                 'prompt'     => $prompt,
                 'full_prompt' => $full_prompt,
-                'connection' => 'gapgpt',
+                'connection' => $settings['connection_mode'],
                 'usage'      => $usage,
                 'estimated_cost' => $estimated_cost,
                 'estimated_cost_toman' => $estimated_cost_toman,
@@ -1010,7 +1433,12 @@ class WooCamers_Helper {
         }
 
         $settings = $this->get_settings();
-        $prompt   = $this->replace_placeholders( $settings['short_description_prompt_template'], $product_context );
+        $brand_description = isset( $settings['brand_description'] ) ? $settings['brand_description'] : '';
+        $prompt   = $this->replace_placeholders( $settings['short_description_prompt_template'], $product_context, $brand_description );
+
+        if ( '' !== $brand_description ) {
+            $product_context['brand_description'] = $brand_description;
+        }
 
         if ( 'mock' === $settings['connection_mode'] ) {
             $mock_text = trim( $product_context['title'] . '، انتخابی خوش‌طعم و کاربردی برای مصرف روزانه است. با کیفیت مناسب، طعم دلپذیر و مشخصات روشن، برای استفاده در خانه یا فروشگاه گزینه‌ای قابل‌اعتماد محسوب می‌شود.' );
@@ -1030,12 +1458,22 @@ class WooCamers_Helper {
             wp_send_json_error( 'OpenAI API Key is required for the Gap GPT connection mode.' );
         }
 
+        if ( 'avalai' === $settings['connection_mode'] && empty( $settings['api_key'] ) ) {
+            wp_send_json_error( 'AvalAI API Key is required for the AvalAI connection mode.' );
+        }
+
         if ( 'endpoint' === $settings['connection_mode'] && empty( $settings['api_endpoint'] ) ) {
             wp_send_json_error( 'API Endpoint is required for the custom endpoint mode.' );
         }
 
         $args = $this->maybe_build_request_args( $settings, $product_context, $prompt, 'short_description' );
-        $endpoint = 'gapgpt' === $settings['connection_mode'] ? $this->get_openai_endpoint( $settings ) : $settings['api_endpoint'];
+        if ( 'gapgpt' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_openai_endpoint( $settings );
+        } elseif ( 'avalai' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_avalai_endpoint();
+        } else {
+            $endpoint = $settings['api_endpoint'];
+        }
 
         $resp = wp_remote_post( $endpoint, $args );
         if ( is_wp_error( $resp ) ) {
@@ -1062,7 +1500,7 @@ class WooCamers_Helper {
             array(
                 'short_description' => $short_description,
                 'prompt'             => $prompt,
-                'connection'         => 'gapgpt',
+                'connection'         => $settings['connection_mode'],
                 'usage'              => $usage,
                 'estimated_cost'     => $estimated_cost,
                 'estimated_cost_toman' => $estimated_cost_toman,
@@ -1084,7 +1522,13 @@ class WooCamers_Helper {
         }
 
         $settings = $this->get_settings();
-        $prompt   = $this->replace_placeholders( $settings['product_description_prompt_template'], $product_context );
+        $brand_description = isset( $settings['brand_description'] ) ? $settings['brand_description'] : '';
+        $prompt   = $this->replace_placeholders( $settings['product_description_prompt_template'], $product_context, $brand_description );
+
+        if ( '' !== $brand_description ) {
+            $product_context['brand_description'] = $brand_description;
+        }
+
         $product_context_json = wp_json_encode(
             $product_context,
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -1110,12 +1554,22 @@ class WooCamers_Helper {
             wp_send_json_error( 'OpenAI API Key is required for the Gap GPT connection mode.' );
         }
 
+        if ( 'avalai' === $settings['connection_mode'] && empty( $settings['api_key'] ) ) {
+            wp_send_json_error( 'AvalAI API Key is required for the AvalAI connection mode.' );
+        }
+
         if ( 'endpoint' === $settings['connection_mode'] && empty( $settings['api_endpoint'] ) ) {
             wp_send_json_error( 'API Endpoint is required for the custom endpoint mode.' );
         }
 
         $args = $this->maybe_build_request_args( $settings, $product_context, $prompt, 'product_description' );
-        $endpoint = 'gapgpt' === $settings['connection_mode'] ? $this->get_openai_endpoint( $settings ) : $settings['api_endpoint'];
+        if ( 'gapgpt' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_openai_endpoint( $settings );
+        } elseif ( 'avalai' === $settings['connection_mode'] ) {
+            $endpoint = $this->get_avalai_endpoint();
+        } else {
+            $endpoint = $settings['api_endpoint'];
+        }
 
         $resp = wp_remote_post( $endpoint, $args );
         if ( is_wp_error( $resp ) ) {
@@ -1143,12 +1597,136 @@ class WooCamers_Helper {
                 'product_description' => $product_description,
                 'prompt'              => $prompt,
                 'full_prompt'         => $full_prompt,
-                'connection'          => 'gapgpt',
+                'connection'          => $settings['connection_mode'],
                 'usage'               => $usage,
                 'estimated_cost'      => $estimated_cost,
                 'estimated_cost_toman' => $estimated_cost_toman,
             )
         );
+    }
+
+    private function wh_normalize_label( $text ) {
+        $text = wp_strip_all_tags( (string) $text );
+        // Remove ZWNJ / RLM / LRM marks that are common in Persian text.
+        $text = str_replace( array( "\xE2\x80\x8C", "\xE2\x80\x8F", "\xE2\x80\x8E" ), '', $text );
+        $text = preg_replace( '/\s+/u', ' ', $text );
+        $text = trim( $text );
+
+        return function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+    }
+
+    private function maybe_register_attribute_taxonomy( $taxonomy ) {
+        if ( '' === (string) $taxonomy || taxonomy_exists( $taxonomy ) ) {
+            return;
+        }
+
+        register_taxonomy(
+            $taxonomy,
+            array( 'product' ),
+            array(
+                'hierarchical' => false,
+                'show_ui'      => false,
+                'query_var'    => true,
+                'rewrite'      => false,
+            )
+        );
+    }
+
+    /**
+     * Find an existing global product attribute by label/name, or create it.
+     * Returns the taxonomy name (e.g. "pa_color") or WP_Error.
+     */
+    private function get_or_create_global_attribute( $label ) {
+        $label = sanitize_text_field( $label );
+        if ( '' === $label ) {
+            return new WP_Error( 'wh_attr_empty', 'نام ویژگی خالی است.' );
+        }
+
+        $target = $this->wh_normalize_label( $label );
+
+        foreach ( wc_get_attribute_taxonomies() as $tax ) {
+            $label_match = $this->wh_normalize_label( $tax->attribute_label ) === $target;
+            $name_match  = $this->wh_normalize_label( $tax->attribute_name ) === $target;
+
+            if ( $label_match || $name_match ) {
+                $taxonomy = wc_attribute_taxonomy_name( $tax->attribute_name );
+                $this->maybe_register_attribute_taxonomy( $taxonomy );
+                return $taxonomy;
+            }
+        }
+
+        // Not found — create a new global attribute.
+        $slug = wc_sanitize_taxonomy_name( $label );
+        if ( '' === $slug ) {
+            $slug = 'wh-' . substr( md5( $label ), 0, 12 );
+        }
+        // Taxonomy name is limited to 32 chars (incl. the "pa_" prefix); WC limits the slug to 28.
+        if ( strlen( $slug ) > 28 ) {
+            $slug = substr( $slug, 0, 18 ) . substr( md5( $label ), 0, 8 );
+        }
+
+        $attribute_id = wc_create_attribute(
+            array(
+                'name'         => $label,
+                'slug'         => $slug,
+                'type'         => 'select',
+                'order_by'     => 'menu_order',
+                'has_archives' => false,
+            )
+        );
+
+        // If the slug caused a problem, retry once with a safe ASCII slug.
+        if ( is_wp_error( $attribute_id ) ) {
+            $attribute_id = wc_create_attribute(
+                array(
+                    'name'         => $label,
+                    'slug'         => 'wh-' . substr( md5( $label . microtime() ), 0, 12 ),
+                    'type'         => 'select',
+                    'order_by'     => 'menu_order',
+                    'has_archives' => false,
+                )
+            );
+        }
+
+        if ( is_wp_error( $attribute_id ) ) {
+            return $attribute_id;
+        }
+
+        $created  = wc_get_attribute( $attribute_id );
+        $taxonomy = ( $created && ! empty( $created->slug ) ) ? $created->slug : wc_attribute_taxonomy_name( $slug );
+
+        // Make sure later lookups in this same request see the new attribute.
+        delete_transient( 'wc_attribute_taxonomies' );
+        $this->maybe_register_attribute_taxonomy( $taxonomy );
+
+        return $taxonomy;
+    }
+
+    /**
+     * Find an existing term (value) inside the taxonomy, or create it.
+     * Returns the term id (int) or WP_Error.
+     */
+    private function get_or_create_attribute_term( $value, $taxonomy ) {
+        $value = sanitize_text_field( $value );
+        if ( '' === $value ) {
+            return new WP_Error( 'wh_term_empty', 'مقدار ویژگی خالی است.' );
+        }
+
+        $existing = term_exists( $value, $taxonomy );
+        if ( $existing && ! is_wp_error( $existing ) && ! empty( $existing['term_id'] ) ) {
+            return (int) $existing['term_id'];
+        }
+
+        $created = wp_insert_term( $value, $taxonomy );
+        if ( is_wp_error( $created ) ) {
+            $existing_id = $created->get_error_data( 'term_exists' );
+            if ( $existing_id ) {
+                return (int) $existing_id;
+            }
+            return $created;
+        }
+
+        return (int) $created['term_id'];
     }
 
     public function ajax_add_attributes() {
@@ -1166,32 +1744,150 @@ class WooCamers_Helper {
             wp_send_json_error( 'Product not found' );
         }
 
-        $existing = $product->get_attributes();
-        $position  = count( $existing ) + 1;
-
+        // Group requested values per attribute name.
+        $grouped = array();
         foreach ( $attrs as $a ) {
-            if ( empty( $a['name'] ) ) {
+            if ( ! is_array( $a ) || empty( $a['name'] ) ) {
                 continue;
             }
 
             $name  = sanitize_text_field( $a['name'] );
             $value = isset( $a['value'] ) ? sanitize_text_field( $a['value'] ) : '';
 
-            $attr = new WC_Product_Attribute();
-            $attr->set_name( $name );
-            $attr->set_options( array( $value ) );
-            $attr->set_position( $position );
-            $attr->set_visible( true );
-            $attr->set_variation( false );
+            if ( '' === $name || '' === $value ) {
+                continue;
+            }
 
-            $existing[ sanitize_title( $name ) ] = $attr;
-            $position++;
+            $grouped[ $name ][] = $value;
         }
 
-        $product->set_attributes( $existing );
-        $product->save();
+        if ( empty( $grouped ) ) {
+            wp_send_json_error( 'هیچ ویژگی معتبری برای افزودن وجود ندارد. نام و مقدار را بررسی کنید.' );
+        }
 
-        wp_send_json_success( 'Attributes added' );
+        // Read the raw stored attributes meta (most reliable for taxonomy attributes).
+        $product_attributes = get_post_meta( $product_id, '_product_attributes', true );
+        if ( ! is_array( $product_attributes ) ) {
+            $product_attributes = array();
+        }
+
+        $position     = count( $product_attributes );
+        $added_terms  = 0;
+        $new_attrs    = 0;
+        $touched_tax  = array();
+        $errors       = array();
+
+        foreach ( $grouped as $name => $values ) {
+            // 1) Find or create the global attribute (the "key").
+            $taxonomy = $this->get_or_create_global_attribute( $name );
+            if ( is_wp_error( $taxonomy ) ) {
+                $errors[] = $name . ': ' . $taxonomy->get_error_message();
+                continue;
+            }
+
+            // Make sure the taxonomy is registered before touching its terms.
+            $this->maybe_register_attribute_taxonomy( $taxonomy );
+
+            // 2) Find or create each value (term). Existing values are reused as-is.
+            $new_term_ids = array();
+            foreach ( array_unique( $values ) as $value ) {
+                $term_id = $this->get_or_create_attribute_term( $value, $taxonomy );
+                if ( is_wp_error( $term_id ) ) {
+                    $errors[] = $name . ' / ' . $value . ': ' . $term_id->get_error_message();
+                    continue;
+                }
+                $new_term_ids[] = (int) $term_id;
+                $added_terms++;
+            }
+
+            if ( empty( $new_term_ids ) ) {
+                continue;
+            }
+
+            // 3) Merge with terms already assigned to this product for this attribute.
+            $current_ids = wp_get_object_terms( $product_id, $taxonomy, array( 'fields' => 'ids' ) );
+            if ( is_wp_error( $current_ids ) ) {
+                $current_ids = array();
+            }
+
+            $all_term_ids = array_values( array_unique( array_map( 'intval', array_merge( $current_ids, $new_term_ids ) ) ) );
+
+            // 4) Assign the terms to the product object (this powers the product filters).
+            $set = wp_set_object_terms( $product_id, $all_term_ids, $taxonomy, false );
+            if ( is_wp_error( $set ) ) {
+                $errors[] = $name . ': ' . $set->get_error_message();
+                continue;
+            }
+
+            // 5) Register the attribute in the raw _product_attributes meta as a taxonomy attribute.
+            if ( ! isset( $product_attributes[ $taxonomy ] ) ) {
+                $position++;
+                $new_attrs++;
+            }
+
+            $product_attributes[ $taxonomy ] = array(
+                'name'         => $taxonomy,
+                'value'        => '',
+                'position'     => isset( $product_attributes[ $taxonomy ]['position'] ) ? $product_attributes[ $taxonomy ]['position'] : $position,
+                'is_visible'   => 1,
+                'is_variation' => isset( $product_attributes[ $taxonomy ]['is_variation'] ) ? (int) $product_attributes[ $taxonomy ]['is_variation'] : 0,
+                'is_taxonomy'  => 1,
+            );
+
+            $touched_tax[] = $taxonomy;
+
+            // Remove any leftover custom (non-taxonomy) attribute with the same label
+            // so we don't end up with duplicate "key" rows on the product.
+            foreach ( $product_attributes as $key => $row ) {
+                if ( $key === $taxonomy || ! is_array( $row ) ) {
+                    continue;
+                }
+                $row_is_taxonomy = ! empty( $row['is_taxonomy'] );
+                $row_name        = isset( $row['name'] ) ? $row['name'] : '';
+                if ( ! $row_is_taxonomy && $this->wh_normalize_label( $row_name ) === $this->wh_normalize_label( $name ) ) {
+                    unset( $product_attributes[ $key ] );
+                }
+            }
+        }
+
+        if ( 0 === $added_terms ) {
+            wp_send_json_error( ! empty( $errors ) ? implode( ' | ', $errors ) : 'هیچ ویژگی‌ای اضافه نشد.' );
+        }
+
+        // Persist the attributes meta directly.
+        update_post_meta( $product_id, '_product_attributes', $product_attributes );
+
+        // Re-save through the CRUD so WooCommerce fires its update hooks and
+        // regenerates the product-attributes lookup table used by filters.
+        $fresh = wc_get_product( $product_id );
+        if ( $fresh ) {
+            $fresh->save();
+        }
+
+        wc_delete_product_transients( $product_id );
+        clean_post_cache( $product_id );
+
+        // Verification: re-read what is actually stored on the product right now.
+        $verify = array();
+        foreach ( array_values( array_unique( $touched_tax ) ) as $tax ) {
+            $term_names = wp_get_object_terms( $product_id, $tax, array( 'fields' => 'names' ) );
+            $verify[]   = $tax . ' → ' . ( is_wp_error( $term_names ) ? 'ERR' : implode( ', ', $term_names ) );
+        }
+
+        $meta_now  = get_post_meta( $product_id, '_product_attributes', true );
+        $meta_keys = is_array( $meta_now ) ? array_keys( $meta_now ) : array();
+
+        wp_send_json_success(
+            array(
+                'message'     => 'ویژگی‌ها به‌صورت ویژگی سراسری ووکامرس ثبت و به محصول اضافه شدند.',
+                'added_terms' => $added_terms,
+                'new_attrs'   => $new_attrs,
+                'taxonomies'  => array_values( array_unique( $touched_tax ) ),
+                'verify'      => $verify,
+                'meta_keys'   => $meta_keys,
+                'errors'      => $errors,
+            )
+        );
     }
 }
 

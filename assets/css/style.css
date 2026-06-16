@@ -27,3 +27,13 @@
   .wh-attr-check{ padding-top:0; }
   .wh-attr-fields{ grid-template-columns:1fr; }
 }
+.wh-sample-product{ padding:12px; margin-bottom:12px; border:1px solid #dcdcde; border-radius:6px; background:#fff; }
+.wh-sample-product-head{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.wh-sample-product-head .wh-sample-url{ flex:1 1 320px; }
+.wh-sample-product-head .wh-fetch-sample.is-busy{ pointer-events:none; opacity:0.6; }
+.wh-sample-product-head .wh-remove-sample{ color:#b32d2e; }
+.wh-sample-preview{ margin-top:10px; }
+.wh-sample-preview:empty{ display:none; }
+.wh-sample-attrs-title{ font-weight:600; margin-bottom:4px; color:#1d2327; }
+.wh-sample-attrs-list{ margin:0; padding:0 18px 0 0; list-style:disc; color:#3c434a; }
+.wh-sample-attrs-list li{ margin:2px 0; }

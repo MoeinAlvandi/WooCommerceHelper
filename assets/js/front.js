@@ -180,9 +180,33 @@
 
             $.post(whData.ajax_url, post).done(function (r) {
                 if (r && r.success) {
-                    alert(strings.success_text || 'ویژگی‌ها اضافه شدند.');
+                    var d = r.data || {};
+                    var msg = d.message || (strings.success_text || 'ویژگی‌ها اضافه شدند.');
+                    if (typeof d.added_terms !== 'undefined') {
+                        msg += '\n(' + d.added_terms + ' مقدار، ' + (d.new_attrs || 0) + ' ویژگی جدید)';
+                    }
+                    if (d.verify && d.verify.length) {
+                        msg += '\nروی محصول الان:\n' + d.verify.join('\n');
+                    }
+                    if (d.errors && d.errors.length) {
+                        msg += '\nخطاها: ' + d.errors.join(' | ');
+                    }
+
                     win.overlay.remove();
                     win.modal.remove();
+
+                    // On the product edit screen the Attributes metabox does not refresh by
+                    // itself, and saving the product would overwrite the freshly added
+                    // attribute. Reload so it appears in the panel and sticks on save.
+                    var onEditScreen = $('#woocommerce-product-data').length || ($('#post_ID').length && $('body').hasClass('post-type-product'));
+
+                    if (onEditScreen) {
+                        if (window.confirm(msg + '\n\nبرای نمایش در تب «ویژگی‌ها» و جلوگیری از پاک‌شدن هنگام ذخیره، صفحه رفرش شود؟\n(اگر تغییرات ذخیره‌نشده دارید، ابتدا انصراف دهید و محصول را ذخیره کنید.)')) {
+                            window.location.reload();
+                        }
+                    } else {
+                        alert(msg);
+                    }
                 } else {
                     alert((strings.error_text || 'خطا') + ': ' + ((r && r.data) || 'خطا در افزودن'));
                 }
@@ -563,7 +587,129 @@
         requestProductDescription(productId, $(this));
     });
 
+    // -------------------------------------------------------------------------
+    // Sample products (settings page)
+    // -------------------------------------------------------------------------
+    function renderSamplePreview($row, attributes) {
+        var strings = getStrings();
+        var $preview = $row.find('.wh-sample-preview');
+
+        if (!attributes || !attributes.length) {
+            $preview.empty();
+            return;
+        }
+
+        var html = '<div class="wh-sample-attrs-title">' + escHtml(strings.sample_attrs_label || 'ویژگی‌های خوانده‌شده') + ':</div>';
+        html += '<ul class="wh-sample-attrs-list">';
+        attributes.forEach(function (attr) {
+            var name = (attr && (attr.name || attr.key)) || '';
+            var value = (attr && (attr.value || attr.val)) || '';
+            if (!name) {
+                return;
+            }
+            html += '<li><strong>' + escHtml(name) + '</strong>' + (value ? ': ' + escHtml(value) : '') + '</li>';
+        });
+        html += '</ul>';
+
+        $preview.html(html);
+    }
+
+    function readStoredSampleAttributes($row) {
+        var raw = $row.find('.wh-sample-attributes').val();
+        if (!raw) {
+            return [];
+        }
+        try {
+            var parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function initExistingSamplePreviews() {
+        $('#wh-sample-products .wh-sample-product').each(function () {
+            renderSamplePreview($(this), readStoredSampleAttributes($(this)));
+        });
+    }
+
+    function getNextSampleIndex() {
+        var max = -1;
+        $('#wh-sample-products .wh-sample-product').each(function () {
+            var idx = parseInt($(this).attr('data-index'), 10);
+            if (!isNaN(idx) && idx > max) {
+                max = idx;
+            }
+        });
+        return max + 1;
+    }
+
+    function addSampleRow() {
+        var template = $('#wh-sample-row-template').html();
+        if (!template) {
+            return;
+        }
+        var index = getNextSampleIndex();
+        var markup = template.replace(/__INDEX__/g, index);
+        $('#wh-sample-products').append(markup);
+    }
+
+    function fetchSampleAttributes($row, $button) {
+        var strings = getStrings();
+        var url = ($row.find('.wh-sample-url').val() || '').trim();
+
+        if (!url) {
+            alert(strings.sample_url_required || 'ابتدا آدرس محصول را وارد کنید.');
+            return;
+        }
+
+        $button.data('wh-original-text', $button.text());
+        $button.prop('disabled', true).addClass('is-busy').text(strings.sample_fetch_loading || 'در حال خواندن...');
+
+        $.post(whData.ajax_url, {
+            action: 'wh_fetch_sample_product',
+            nonce: whData.nonce,
+            url: url
+        }).done(function (resp) {
+            $button.prop('disabled', false).removeClass('is-busy').text($button.data('wh-original-text') || (strings.sample_fetch_text || 'خواندن ویژگی‌ها'));
+
+            if (resp && resp.success) {
+                var data = resp.data || {};
+                var attrs = data.attributes || [];
+
+                $row.find('.wh-sample-title').val(data.title || '');
+                $row.find('.wh-sample-attributes').val(JSON.stringify(attrs));
+                renderSamplePreview($row, attrs);
+
+                if (!attrs.length) {
+                    alert(strings.sample_no_attrs || 'هیچ ویژگی‌ای پیدا نشد.');
+                }
+            } else {
+                alert((strings.error_text || 'خطا') + ': ' + ((resp && resp.data) || 'خواندن ویژگی‌ها ناموفق بود.'));
+            }
+        }).fail(function () {
+            $button.prop('disabled', false).removeClass('is-busy').text($button.data('wh-original-text') || (strings.sample_fetch_text || 'خواندن ویژگی‌ها'));
+            alert('در ارتباط با سرور خطا رخ داد.');
+        });
+    }
+
+    $(document).on('click', '#wh-add-sample', function (e) {
+        e.preventDefault();
+        addSampleRow();
+    });
+
+    $(document).on('click', '.wh-remove-sample', function (e) {
+        e.preventDefault();
+        $(this).closest('.wh-sample-product').remove();
+    });
+
+    $(document).on('click', '.wh-fetch-sample', function (e) {
+        e.preventDefault();
+        fetchSampleAttributes($(this).closest('.wh-sample-product'), $(this));
+    });
+
     $(initEditorAttributeButtonPlacement);
     $(initShortDescriptionButtonPlacement);
     $(initProductDescriptionButtonPlacement);
+    $(initExistingSamplePreviews);
 })(jQuery);
